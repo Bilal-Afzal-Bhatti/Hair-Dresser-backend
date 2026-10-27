@@ -1,0 +1,17 @@
+# Local PostgreSQL for development:  docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: casa-cut-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: casa_cut
+    ports:
+      - "5432:5432"
+    volumes:
+      - casa_cut_pg:/var/lib/postgresql/data
+
+volumes:
+  casa_cut_pg:

@@ -1,0 +1,15 @@
+{
+  "_meta": { "name": "Français" },
+  "email": {
+    "greeting": "Bonjour {name},",
+    "footer": "Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail.",
+    "verify": {
+      "subject": "Votre code de vérification MT",
+      "body": "Votre code de vérification est {code}. Il expire dans {minutes} minutes."
+    },
+    "reset": {
+      "subject": "Réinitialisez votre mot de passe MT",
+      "body": "Votre code de réinitialisation est {code}. Il expire dans {minutes} minutes."
+    }
+  }
+}

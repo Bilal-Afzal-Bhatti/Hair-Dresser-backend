@@ -1,0 +1,15 @@
+{
+  "_meta": { "name": "English" },
+  "email": {
+    "greeting": "Hi {name},",
+    "footer": "If you didn't request this, you can ignore this email.",
+    "verify": {
+      "subject": "Your MT verification code",
+      "body": "Your verification code is {code}. It expires in {minutes} minutes."
+    },
+    "reset": {
+      "subject": "Reset your MT password",
+      "body": "Your password reset code is {code}. It expires in {minutes} minutes."
+    }
+  }
+}

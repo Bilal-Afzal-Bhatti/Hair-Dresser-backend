@@ -1,0 +1,392 @@
+// Casa Cut - database schema (PostgreSQL, Prisma ORM 7)
+//
+// Conventions
+// - Table and column names are snake_case in the database (@map / @@map).
+// - Money is stored as integer cents (e.g. 1250 = 12.50).
+// - All timestamps are UTC.
+// - Translatable content is a JSONB object keyed by language code:
+//   { "en": "Beard trim", "fr": "Taille de barbe", "de": "Bartschnitt" }
+//   Adding a language never needs a migration: just add the new key.
+// - User.language is a plain string (not an enum) for the same reason.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── Users & auth ───────────────────────────
+
+enum Role {
+  CUSTOMER
+  SALON_OWNER
+  SPECIALIST
+  ADMIN
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model User {
+  id               String    @id @default(cuid())
+  name             String
+  email            String    @unique // always stored lowercase
+  phoneCountryCode String    @map("phone_country_code") // e.g. "+33"
+  phone            String // digits only, without country code
+  passwordHash     String    @map("password_hash")
+  avatarUrl        String?   @map("avatar_url")
+  language         String    @default("en")
+  role             Role      @default(CUSTOMER)
+  emailVerifiedAt      DateTime? @map("email_verified_at")
+  notificationsEnabled Boolean   @default(true) @map("notifications_enabled")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  otpCodes    OtpCode[]
+  sessions    Session[]
+  favorites   Favorite[]
+  ownedSalons Salon[]    @relation("SalonOwner")
+  bookings    Booking[]
+  reviews     Review[]
+
+  @@unique([phoneCountryCode, phone])
+  @@map("users")
+}
+
+model OtpCode {
+  id         String     @id @default(cuid())
+  userId     String     @map("user_id")
+  purpose    OtpPurpose
+  codeHash   String     @map("code_hash")
+  expiresAt  DateTime   @map("expires_at")
+  attempts   Int        @default(0)
+  consumedAt DateTime?  @map("consumed_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@map("otp_codes")
+}
+
+/// One row per logged-in device. The refresh token itself is never stored, only its SHA-256 hash.
+model Session {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ─────────────────────────── Catalog ───────────────────────────
+
+/// Beauty service categories shown on Home (Men's haircut, Kids, Waxing...).
+model Category {
+  id        String  @id @default(cuid())
+  key       String  @unique // stable identifier, e.g. "mens_haircut"
+  name      Json // { en, fr, de }
+  icon      String // icon key the app maps to an icon, e.g. "content_cut"
+  imageUrl  String? @map("image_url")
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
+
+  salons   SalonCategory[]
+  services Service[]
+
+  @@map("categories")
+}
+
+enum SalonStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+model Salon {
+  id                String      @id @default(cuid())
+  ownerId           String?     @map("owner_id")
+  name              String
+  slug              String      @unique
+  description       Json // { en, fr, de }
+  addressLine       String      @map("address_line")
+  city              String
+  country           String // ISO code, e.g. "FR"
+  latitude          Float
+  longitude         Float
+  phone             String?
+  website           String?
+  coverImageUrl     String?     @map("cover_image_url")
+  avgRating         Float       @default(0) @map("avg_rating")
+  reviewCount       Int         @default(0) @map("review_count")
+  priceFromCents    Int?        @map("price_from_cents")
+  currency          String      @default("EUR")
+  offersHomeService Boolean     @default(false) @map("offers_home_service")
+  timezone          String      @default("Europe/Paris")
+  status            SalonStatus @default(PENDING)
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  deletedAt         DateTime?   @map("deleted_at")
+
+  owner        User?           @relation("SalonOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  categories   SalonCategory[]
+  images       SalonImage[]
+  services     Service[]
+  offers       Offer[]
+  favorites    Favorite[]
+  openingHours OpeningHours[]
+  specialists  Specialist[]
+  bookings     Booking[]
+  reviews      Review[]
+  coupons      Coupon[]
+
+  @@index([status, deletedAt])
+  @@index([latitude, longitude])
+  @@map("salons")
+}
+
+model SalonCategory {
+  salonId    String @map("salon_id")
+  categoryId String @map("category_id")
+
+  salon    Salon    @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([salonId, categoryId])
+  @@index([categoryId])
+  @@map("salon_categories")
+}
+
+model SalonImage {
+  id        String @id @default(cuid())
+  salonId   String @map("salon_id")
+  url       String
+  sortOrder Int    @default(0) @map("sort_order")
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([salonId])
+  @@map("salon_images")
+}
+
+model Service {
+  id               String    @id @default(cuid())
+  salonId          String    @map("salon_id")
+  categoryId       String?   @map("category_id")
+  name             Json // { en, fr, de }
+  description      Json? // { en, fr, de }
+  durationMinutes  Int       @map("duration_minutes")
+  priceCents       Int       @map("price_cents")
+  availableAtHome  Boolean   @default(false) @map("available_at_home")
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  salon           Salon            @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  category        Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bookingServices BookingService[]
+
+  @@index([salonId])
+  @@map("services")
+}
+
+/// "Best offers" on Home.
+model Offer {
+  id              String   @id @default(cuid())
+  salonId         String   @map("salon_id")
+  title           Json // { en, fr, de }
+  discountPercent Int      @map("discount_percent")
+  imageUrl        String?  @map("image_url")
+  startsAt        DateTime @map("starts_at")
+  endsAt          DateTime @map("ends_at")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, endsAt])
+  @@map("offers")
+}
+
+model Favorite {
+  userId    String   @map("user_id")
+  salonId   String   @map("salon_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@id([userId, salonId])
+  @@map("favorites")
+}
+
+// ─────────────────────────── Team & hours ───────────────────────────
+
+/// Weekly opening hours in the salon's own timezone. Several rows per weekday = split shifts.
+/// No row for a weekday = closed that day.
+model OpeningHours {
+  id          String @id @default(cuid())
+  salonId     String @map("salon_id")
+  weekday     Int // 1 = Monday ... 7 = Sunday (ISO)
+  openMinute  Int    @map("open_minute") // minutes after midnight, 540 = 09:00
+  closeMinute Int    @map("close_minute") // 1200 = 20:00
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([salonId, weekday])
+  @@map("opening_hours")
+}
+
+/// Barber / stylist. First version: every specialist works the salon's hours and does all its services.
+model Specialist {
+  id        String   @id @default(cuid())
+  salonId   String   @map("salon_id")
+  name      String
+  title     Json // { en, fr, de }, e.g. "Senior barber"
+  avatarUrl String?  @map("avatar_url")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  salon    Salon     @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+  reviews  Review[]
+
+  @@index([salonId])
+  @@map("specialists")
+}
+
+// ─────────────────────────── Bookings ───────────────────────────
+
+/// Customer journey shown in the app: Booked → Waiting → In progress → Done.
+enum BookingStatus {
+  CONFIRMED // "Booked"
+  WAITING // customer arrived / checked in
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingLocation {
+  SALON
+  HOME
+}
+
+enum PaymentMethod {
+  PAY_AT_SALON
+}
+
+model Booking {
+  id              String          @id @default(cuid())
+  reference       String          @unique // short code shown on the receipt, e.g. "CC-7K2M9Q"
+  customerId      String          @map("customer_id")
+  salonId         String          @map("salon_id")
+  specialistId    String?         @map("specialist_id")
+  startAt         DateTime        @map("start_at")
+  endAt           DateTime        @map("end_at")
+  status          BookingStatus   @default(CONFIRMED)
+  location        BookingLocation @default(SALON)
+  paymentMethod   PaymentMethod   @default(PAY_AT_SALON) @map("payment_method")
+  subtotalCents   Int             @map("subtotal_cents")
+  serviceFeeCents Int             @map("service_fee_cents")
+  discountCents   Int             @default(0) @map("discount_cents")
+  totalCents      Int             @map("total_cents")
+  currency        String          @default("EUR")
+  couponId        String?         @map("coupon_id")
+  couponCode      String?         @map("coupon_code")
+  notes           String?
+  cancelReason    String?         @map("cancel_reason")
+  cancelledAt     DateTime?       @map("cancelled_at")
+  checkedInAt     DateTime?       @map("checked_in_at")
+  startedAt       DateTime?       @map("started_at")
+  completedAt     DateTime?       @map("completed_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  customer   User             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  salon      Salon            @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  specialist Specialist?      @relation(fields: [specialistId], references: [id], onDelete: SetNull)
+  coupon     Coupon?          @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  services   BookingService[]
+  review     Review?
+
+  @@index([customerId, startAt])
+  @@index([salonId, startAt])
+  @@index([specialistId, startAt])
+  @@map("bookings")
+}
+
+/// Services in a booking. Name, price and duration are copied at booking time,
+/// so later price changes never alter old bookings or receipts.
+model BookingService {
+  id              String  @id @default(cuid())
+  bookingId       String  @map("booking_id")
+  serviceId       String? @map("service_id")
+  name            Json // { en, fr, de } snapshot
+  priceCents      Int     @map("price_cents")
+  durationMinutes Int     @map("duration_minutes")
+
+  booking Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@map("booking_services")
+}
+
+/// Discount codes typed on the "Your appointment" screen.
+model Coupon {
+  id               String    @id @default(cuid())
+  code             String    @unique // stored uppercase
+  salonId          String?   @map("salon_id") // null = valid in every salon
+  percentOff       Int?      @map("percent_off")
+  amountOffCents   Int?      @map("amount_off_cents")
+  minSubtotalCents Int       @default(0) @map("min_subtotal_cents")
+  maxUsesPerUser   Int       @default(1) @map("max_uses_per_user")
+  startsAt         DateTime? @map("starts_at")
+  endsAt           DateTime? @map("ends_at")
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  salon    Salon?    @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@map("coupons")
+}
+
+/// One review per completed booking.
+model Review {
+  id           String   @id @default(cuid())
+  bookingId    String   @unique @map("booking_id")
+  userId       String   @map("user_id")
+  salonId      String   @map("salon_id")
+  specialistId String?  @map("specialist_id")
+  rating       Int // 1-5
+  comment      String?
+  tags         String[] // keys like "good_service", translated by the app
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  booking    Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  salon      Salon       @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  specialist Specialist? @relation(fields: [specialistId], references: [id], onDelete: SetNull)
+
+  @@index([salonId, createdAt])
+  @@map("reviews")
+}
+
+// Coming later: Payment (when the payment method is chosen), Notification, DeviceToken.
