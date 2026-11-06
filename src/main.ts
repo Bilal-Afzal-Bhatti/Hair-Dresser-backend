@@ -20,7 +20,7 @@ async function bootstrap() {
     // The main address ("/") says the API is running instead of "Cannot GET /"
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   app.getHttpAdapter().get('/', (_req: unknown, res: any) => {
-    res.json({ name: 'MT API', status: 'ok', api: '/api/v1', health: '/api/v1/health', docs: '/docs' });
+    res.json({ name: 'StyleHub', status: 'ok', api: '/api/v1', health: '/api/v1/health', docs: '/docs' });
   });
 
   // Profile photos: http://<server>/uploads/avatars/<random>.jpg
