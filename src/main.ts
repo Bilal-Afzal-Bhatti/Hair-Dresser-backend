@@ -42,7 +42,7 @@ async function bootstrap() {
   });
 
   const swagger = new DocumentBuilder()
-    .setTitle('MT API')
+    .setTitle('stylehub API')
     .setDescription('Hairdresser booking API. Send Accept-Language: en | fr | de on every request.')
     .setVersion('0.1.0')
     .addBearerAuth()
